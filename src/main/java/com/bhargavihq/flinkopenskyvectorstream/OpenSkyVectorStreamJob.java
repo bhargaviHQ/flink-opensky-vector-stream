@@ -58,8 +58,9 @@ public class OpenSkyVectorStreamJob {
             if (previous != null) {
                 long deltaTimeMillis = current.getTimestamp() - previous.getTimestamp();
                 if (deltaTimeMillis > 0) {
+                    double deltaTimeSeconds = deltaTimeMillis / 1000.0d;
                     double deltaAltitude = current.getBaroAltitude() - previous.getBaroAltitude();
-                    double verticalRateMetersPerSecond = deltaAltitude / (deltaTimeMillis / 1000.0d);
+                    double verticalRateMetersPerSecond = deltaAltitude / deltaTimeSeconds;
                     out.collect(String.format(
                             "icao24=%s, callsign=%s, verticalRate=%.3f m/s",
                             current.getIcao24(),

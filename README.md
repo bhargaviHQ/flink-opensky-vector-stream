@@ -13,5 +13,5 @@ src/main/java/com/bhargavihq/flinkopenskyvectorstream/
 ## Build
 
 ```bash
-mvn test
+mvn clean package
 ```
