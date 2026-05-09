@@ -24,7 +24,7 @@ The `docker/` directory contains a `docker-compose.yml` that starts the full loc
 |----------------------|--------------------------------------|---------------|
 | `zookeeper`          | Bitnami Zookeeper 3.9                | 2181          |
 | `kafka`              | Bitnami Kafka 3.7                    | 9092          |
-| `clickhouse`         | ClickHouse (latest official image)   | 8123, 9000    |
+| `clickhouse`         | ClickHouse 24.4                      | 8123, 9000    |
 | `flink-jobmanager`   | Flink 1.19 JobManager                | 8081 (Web UI) |
 | `flink-taskmanager`  | Flink 1.19 TaskManager (2 slots)     | —             |
 
