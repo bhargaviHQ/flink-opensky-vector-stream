@@ -2,6 +2,10 @@ package com.bhargavihq.flinkopenskyvectorstream;
 
 import java.io.Serializable;
 
+/**
+ * OpenSky ADS-B telemetry event where altitude is in meters, velocity is in meters/second,
+ * and timestamp is epoch milliseconds.
+ */
 public class FlightEvent implements Serializable {
     private String icao24;
     private String callsign;

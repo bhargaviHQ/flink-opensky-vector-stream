@@ -56,11 +56,8 @@ public class OpenSkyVectorStreamJob {
         public void processElement(FlightEvent current, Context ctx, Collector<String> out) throws Exception {
             FlightEvent previous = previousFlightEventState.value();
             if (previous != null) {
-                long deltaTimeMillis = current.getTimestamp() - previous.getTimestamp();
-                if (deltaTimeMillis > 0) {
-                    double deltaTimeSeconds = deltaTimeMillis / 1000.0d;
-                    double deltaAltitude = current.getBaroAltitude() - previous.getBaroAltitude();
-                    double verticalRateMetersPerSecond = deltaAltitude / deltaTimeSeconds;
+                Double verticalRateMetersPerSecond = calculateVerticalRateMetersPerSecond(previous, current);
+                if (verticalRateMetersPerSecond != null) {
                     out.collect(String.format(
                             "icao24=%s, callsign=%s, verticalRate=%.3f m/s",
                             current.getIcao24(),
@@ -71,5 +68,16 @@ public class OpenSkyVectorStreamJob {
             }
             previousFlightEventState.update(current);
         }
+    }
+
+    static Double calculateVerticalRateMetersPerSecond(FlightEvent previous, FlightEvent current) {
+        long deltaTimeMillis = current.getTimestamp() - previous.getTimestamp();
+        if (deltaTimeMillis <= 0) {
+            return null;
+        }
+
+        double deltaTimeSeconds = deltaTimeMillis / 1000.0d;
+        double deltaAltitude = current.getBaroAltitude() - previous.getBaroAltitude();
+        return deltaAltitude / deltaTimeSeconds;
     }
 }
