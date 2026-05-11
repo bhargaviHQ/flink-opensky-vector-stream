@@ -1,0 +1,129 @@
+{
+  "title": "OpenSky Live Flights",
+  "uid": "opensky-flights",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "10s",
+  "time": { "from": "now-1h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Total Flights Tracked",
+      "gridPos": { "x": 0, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "blue", "value": null }] } } },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+        "queryType": "sql",
+        "rawSql": "SELECT count() FROM flights",
+        "refId": "A",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "In Air Right Now",
+      "gridPos": { "x": 6, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "green", "value": null }] } } },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+        "queryType": "sql",
+        "rawSql": "SELECT count() FROM flights WHERE on_ground = false",
+        "refId": "A",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Countries Represented",
+      "gridPos": { "x": 12, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "purple", "value": null }] } } },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+        "queryType": "sql",
+        "rawSql": "SELECT count(DISTINCT origin_country) FROM flights",
+        "refId": "A",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Avg Altitude (m)",
+      "gridPos": { "x": 18, "y": 0, "w": 6, "h": 4 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": { "colorMode": "background", "graphMode": "none" },
+      "fieldConfig": { "defaults": { "decimals": 0, "unit": "lengthm", "color": { "mode": "thresholds" }, "thresholds": { "steps": [{ "color": "orange", "value": null }] } } },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+        "queryType": "sql",
+        "rawSql": "SELECT round(avg(baro_altitude)) FROM flights WHERE baro_altitude IS NOT NULL AND on_ground = false",
+        "refId": "A",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 5,
+      "type": "barchart",
+      "title": "Top 15 Countries by Flight Count",
+      "gridPos": { "x": 0, "y": 4, "w": 12, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": { "orientation": "horizontal", "xTickLabelRotation": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "palette-classic" } } },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+        "queryType": "sql",
+        "rawSql": "SELECT origin_country, count() as flights FROM flights WHERE origin_country != '' GROUP BY origin_country ORDER BY flights DESC LIMIT 15",
+        "refId": "A",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 6,
+      "type": "histogram",
+      "title": "Altitude Distribution (m)",
+      "gridPos": { "x": 12, "y": 4, "w": 12, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": { "bucketSize": "auto", "fillOpacity": 80 },
+      "fieldConfig": { "defaults": { "unit": "lengthm", "color": { "mode": "palette-classic" } } },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+        "queryType": "sql",
+        "rawSql": "SELECT baro_altitude FROM flights WHERE baro_altitude IS NOT NULL AND baro_altitude > 0 AND on_ground = false LIMIT 5000",
+        "refId": "A",
+        "format": "table"
+      }]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Live Flight Feed",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 10 },
+      "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+      "options": { "sortBy": [{ "displayName": "last_contact", "desc": true }] },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "on_ground" }, "properties": [{ "id": "custom.width", "value": 90 }] },
+          { "matcher": { "id": "byName", "options": "baro_altitude" }, "properties": [{ "id": "unit", "value": "lengthm" }, { "id": "decimals", "value": 0 }] },
+          { "matcher": { "id": "byName", "options": "velocity" }, "properties": [{ "id": "unit", "value": "velocityms" }, { "id": "decimals", "value": 0 }] }
+        ]
+      },
+      "targets": [{
+        "datasource": { "type": "grafana-clickhouse-datasource", "uid": "clickhouse_ds" },
+        "queryType": "sql",
+        "rawSql": "SELECT icao24, callsign, origin_country, baro_altitude, velocity, vertical_rate, on_ground, last_contact FROM flights WHERE callsign IS NOT NULL ORDER BY last_contact DESC LIMIT 50",
+        "refId": "A",
+        "format": "table"
+      }]
+    }
+  ]
+}

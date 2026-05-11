@@ -1,1 +1,30 @@
+# Maven build output
 target/
+
+# Python
+producer/.venv/
+producer/__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+
+# Claude Code
+.claude/
+CLAUDE.md
+*.claude
+
+# Environment / secrets
+.env
+.env.*
+*.env
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# macOS
+.DS_Store
+
+# Docker volumes / data
+docker/data/

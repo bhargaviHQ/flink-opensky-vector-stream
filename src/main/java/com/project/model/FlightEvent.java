@@ -162,4 +162,9 @@ public class FlightEvent implements Serializable {
     public void setVerticalRate(Double verticalRate) {
         this.verticalRate = verticalRate;
     }
+
+    /** Returns event time in epoch milliseconds for Flink watermarks. */
+    public long getTimestamp() {
+        return lastContact != null ? lastContact * 1000L : 0L;
+    }
 }
