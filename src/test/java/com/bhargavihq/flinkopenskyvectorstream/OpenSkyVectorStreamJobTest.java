@@ -1,9 +1,12 @@
 package com.bhargavihq.flinkopenskyvectorstream;
 
 import com.project.model.FlightEvent;
+import org.apache.flink.api.common.state.StateTtlConfig;
+import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.assertNull;
 
 class OpenSkyVectorStreamJobTest {
@@ -47,5 +50,15 @@ class OpenSkyVectorStreamJobTest {
         curr.setLastContact(4L);
         // baroAltitude left null
         assertNull(OpenSkyVectorStreamJob.calculateVerticalRateMetersPerSecond(prev, curr));
+    }
+
+    @Test
+    void alertStateDescriptorHasTtlEnabled() {
+        ValueStateDescriptor<FlightEvent> descriptor =
+                OpenSkyVectorStreamJob.previousEventStateDescriptor();
+        StateTtlConfig ttlConfig = descriptor.getTtlConfig();
+        assertTrue(ttlConfig.isEnabled());
+        assertEquals(OpenSkyVectorStreamJob.ALERT_STATE_TTL_MINUTES * 60_000L,
+                ttlConfig.getTimeToLive().toMillis());
     }
 }
