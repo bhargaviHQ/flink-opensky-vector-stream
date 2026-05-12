@@ -3,6 +3,7 @@ package com.bhargavihq.flinkopenskyvectorstream;
 import com.project.model.FlightEvent;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.AggregateFunction;
+import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
 import org.apache.flink.api.java.tuple.Tuple2;
@@ -30,6 +31,7 @@ public class OpenSkyVectorStreamJob {
 
     // Vertical rate thresholds in m/s: ~6 m/s ≈ 1200 ft/min
     private static final double ALERT_VERTICAL_RATE_MS = 6.0;
+    static final int ALERT_STATE_TTL_MINUTES = 30;
 
     private static final String INSERT_FLIGHTS_SQL =
             "INSERT INTO flights (icao24, callsign, origin_country, time_position, last_contact, " +
@@ -111,8 +113,7 @@ public class OpenSkyVectorStreamJob {
 
         @Override
         public void open(Configuration parameters) {
-            previousState = getRuntimeContext().getState(
-                    new ValueStateDescriptor<>("prev-event", FlightEvent.class));
+            previousState = getRuntimeContext().getState(previousEventStateDescriptor());
         }
 
         @Override
@@ -133,6 +134,19 @@ public class OpenSkyVectorStreamJob {
             }
             previousState.update(current);
         }
+    }
+
+    static ValueStateDescriptor<FlightEvent> previousEventStateDescriptor() {
+        ValueStateDescriptor<FlightEvent> descriptor =
+                new ValueStateDescriptor<>("prev-event", FlightEvent.class);
+        StateTtlConfig ttlConfig = StateTtlConfig
+                .newBuilder(org.apache.flink.api.common.time.Time.minutes(ALERT_STATE_TTL_MINUTES))
+                .setUpdateType(StateTtlConfig.UpdateType.OnCreateAndWrite)
+                .setStateVisibility(StateTtlConfig.StateVisibility.NeverReturnExpired)
+                .cleanupFullSnapshot()
+                .build();
+        descriptor.enableTimeToLive(ttlConfig);
+        return descriptor;
     }
 
     // ── 60-second tumbling window: count flights per country ──────────────────

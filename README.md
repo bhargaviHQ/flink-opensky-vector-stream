@@ -123,7 +123,7 @@ Every 10 seconds, the pipeline:
 Every event is batched (1,000 records or 1 second) and written to ClickHouse. The `ReplacingMergeTree` engine deduplicates rows for the same `(icao24, time_position)`, keeping the latest `last_contact`.
 
 ### 2. Climb / descent alerts (keyed stateful process function)
-For each aircraft (`icao24`), Flink keeps the previous `FlightEvent` in managed key/value state. On each update it computes:
+For each aircraft (`icao24`), Flink keeps the previous `FlightEvent` in managed key/value state (with a **30-minute TTL**). On each update it computes:
 
 ```
 vertical_rate = Δaltitude / Δtime_seconds
@@ -134,6 +134,8 @@ When `|vertical_rate| ≥ 6 m/s` an alert fires:
 CLIMBING   icao24=a1b2c3 callsign=UAL123 rate=12.4 m/s alt=4200 m
 DESCENDING icao24=d4e5f6 callsign=BAW456 rate=-9.1 m/s alt=1800 m
 ```
+
+The state TTL prevents stale keys from accumulating indefinitely when aircraft drop out of the stream, keeping keyed state bounded and production-safe.
 
 ### 3. 60-second tumbling window — flights per country
 Using event-time watermarks (bounded out-of-orderness: 5 seconds), Flink counts flights per country in each 60-second window and logs the result.
