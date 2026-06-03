@@ -3,6 +3,8 @@ package com.bhargavihq.flinkopenskyvectorstream;
 import com.project.model.FlightEvent;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
 import org.apache.flink.api.common.functions.AggregateFunction;
+import org.apache.flink.api.common.state.ListState;
+import org.apache.flink.api.common.state.ListStateDescriptor;
 import org.apache.flink.api.common.state.StateTtlConfig;
 import org.apache.flink.api.common.state.ValueState;
 import org.apache.flink.api.common.state.ValueStateDescriptor;
@@ -16,12 +18,20 @@ import org.apache.flink.connector.kafka.source.enumerator.initializer.OffsetsIni
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.KeyedProcessFunction;
+import org.apache.flink.streaming.api.functions.windowing.ProcessWindowFunction;
+import org.apache.flink.streaming.api.windowing.assigners.SlidingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.assigners.TumblingEventTimeWindows;
 import org.apache.flink.streaming.api.windowing.time.Time;
+import org.apache.flink.streaming.api.windowing.windows.TimeWindow;
 import org.apache.flink.util.Collector;
 
 import java.sql.Types;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.List;
+import java.util.Locale;
+import java.io.Serializable;
 
 public class OpenSkyVectorStreamJob {
 
@@ -32,6 +42,10 @@ public class OpenSkyVectorStreamJob {
     // Vertical rate thresholds in m/s: ~6 m/s ≈ 1200 ft/min
     private static final double ALERT_VERTICAL_RATE_MS = 6.0;
     static final int ALERT_STATE_TTL_MINUTES = 30;
+    static final int HOTSPOT_WINDOW_SECONDS = 120;
+    static final int HOTSPOT_SLIDE_SECONDS = 30;
+    static final int HOTSPOT_TOP_N = 5;
+    static final double HOTSPOT_GRID_DEGREES = 1.0;
 
     private static final String INSERT_FLIGHTS_SQL =
             "INSERT INTO flights (icao24, callsign, origin_country, time_position, last_contact, " +
@@ -100,6 +114,20 @@ public class OpenSkyVectorStreamJob {
                 .aggregate(new CountAggregate())
                 .map(t -> String.format("country=%s count=%d", t.f0, t.f1))
                 .print("COUNTRY-WINDOW");
+
+        // 4. Sliding spatial hotspots: top-N busiest geo-cells over event-time windows.
+        flights.filter(OpenSkyVectorStreamJob::isAirborneWithCoordinates)
+                .keyBy(e -> toSpatialCell(
+                        e.getLatitude(),
+                        e.getLongitude(),
+                        HOTSPOT_GRID_DEGREES))
+                .window(SlidingEventTimeWindows.of(
+                        Time.seconds(HOTSPOT_WINDOW_SECONDS),
+                        Time.seconds(HOTSPOT_SLIDE_SECONDS)))
+                .aggregate(new CellCountAggregate(), new CellCountWindowFunction())
+                .keyBy(CellWindowCount::getWindowEnd)
+                .process(new TopNHotspotsFunction(HOTSPOT_TOP_N))
+                .print("HOTSPOT-WINDOW");
 
         env.execute("flink-opensky-vector-stream");
     }
@@ -176,6 +204,107 @@ public class OpenSkyVectorStreamJob {
         }
     }
 
+    // ── Sliding hotspots: top-N spatial cells by aircraft density ─────────────
+
+    static class CellWindowCount implements Serializable {
+        private long windowEnd;
+        private String cell;
+        private long count;
+
+        CellWindowCount() {
+        }
+
+        CellWindowCount(long windowEnd, String cell, long count) {
+            this.windowEnd = windowEnd;
+            this.cell = cell;
+            this.count = count;
+        }
+
+        long getWindowEnd() {
+            return windowEnd;
+        }
+
+        String getCell() {
+            return cell;
+        }
+
+        long getCount() {
+            return count;
+        }
+    }
+
+    private static class CellCountAggregate implements AggregateFunction<FlightEvent, Long, Long> {
+        @Override
+        public Long createAccumulator() {
+            return 0L;
+        }
+
+        @Override
+        public Long add(FlightEvent value, Long accumulator) {
+            return accumulator + 1L;
+        }
+
+        @Override
+        public Long getResult(Long accumulator) {
+            return accumulator;
+        }
+
+        @Override
+        public Long merge(Long a, Long b) {
+            return a + b;
+        }
+    }
+
+    private static class CellCountWindowFunction
+            extends ProcessWindowFunction<Long, CellWindowCount, String, TimeWindow> {
+        @Override
+        public void process(
+                String cell,
+                Context context,
+                Iterable<Long> counts,
+                Collector<CellWindowCount> out) {
+            out.collect(new CellWindowCount(context.window().getEnd(), cell, counts.iterator().next()));
+        }
+    }
+
+    private static class TopNHotspotsFunction
+            extends KeyedProcessFunction<Long, CellWindowCount, String> {
+        private final int topN;
+        private transient ListState<CellWindowCount> countsState;
+
+        TopNHotspotsFunction(int topN) {
+            this.topN = topN;
+        }
+
+        @Override
+        public void open(Configuration parameters) {
+            countsState = getRuntimeContext().getListState(
+                    new ListStateDescriptor<>("cell-window-counts", CellWindowCount.class));
+        }
+
+        @Override
+        public void processElement(
+                CellWindowCount value,
+                Context ctx,
+                Collector<String> out) throws Exception {
+            countsState.add(value);
+            ctx.timerService().registerEventTimeTimer(value.getWindowEnd() + 1);
+        }
+
+        @Override
+        public void onTimer(
+                long timestamp,
+                OnTimerContext ctx,
+                Collector<String> out) throws Exception {
+            List<CellWindowCount> counts = new ArrayList<>();
+            for (CellWindowCount item : countsState.get()) {
+                counts.add(item);
+            }
+            out.collect(formatTopHotspots(timestamp - 1, counts, topN));
+            countsState.clear();
+        }
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     static Double calculateVerticalRateMetersPerSecond(FlightEvent previous, FlightEvent current) {
@@ -183,6 +312,46 @@ public class OpenSkyVectorStreamJob {
         long deltaMs = current.getTimestamp() - previous.getTimestamp();
         if (deltaMs <= 0) return null;
         return (current.getBaroAltitude() - previous.getBaroAltitude()) / (deltaMs / 1000.0);
+    }
+
+    static boolean isAirborneWithCoordinates(FlightEvent event) {
+        return !Boolean.TRUE.equals(event.getOnGround())
+                && event.getLatitude() != null
+                && event.getLongitude() != null;
+    }
+
+    static String toSpatialCell(double latitude, double longitude, double gridDegrees) {
+        double latStart = Math.floor(latitude / gridDegrees) * gridDegrees;
+        double lonStart = Math.floor(longitude / gridDegrees) * gridDegrees;
+        return String.format(
+                Locale.ROOT,
+                "lat=%.1f..%.1f,lon=%.1f..%.1f",
+                latStart,
+                latStart + gridDegrees,
+                lonStart,
+                lonStart + gridDegrees);
+    }
+
+    static String formatTopHotspots(long windowEnd, List<CellWindowCount> counts, int topN) {
+        counts.sort(Comparator
+                .comparingLong(CellWindowCount::getCount).reversed()
+                .thenComparing(CellWindowCount::getCell));
+        int limit = Math.min(topN, counts.size());
+        StringBuilder sb = new StringBuilder();
+        sb.append("window_end=").append(windowEnd).append(" top_cells=[");
+        for (int i = 0; i < limit; i++) {
+            CellWindowCount item = counts.get(i);
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(i + 1)
+                    .append(":")
+                    .append(item.getCell())
+                    .append("=")
+                    .append(item.getCount());
+        }
+        sb.append("]");
+        return sb.toString();
     }
 
     private static void setNullableString(java.sql.PreparedStatement ps, int i, String v)

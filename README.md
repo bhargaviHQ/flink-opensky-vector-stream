@@ -10,10 +10,11 @@ Every 10 seconds, the pipeline:
 
 1. **Fetches** live aircraft states from the OpenSky REST API
 2. **Produces** each flight as a JSON event into a Kafka topic
-3. **Processes** the stream in Flink across three parallel operations:
+3. **Processes** the stream in Flink across four parallel operations:
    - Writes every raw event to ClickHouse via JDBC
    - Emits a climb/descent alert when vertical rate exceeds 6 m/s (~1,200 ft/min)
    - Aggregates flight counts per country in 60-second tumbling windows
+   - Detects top-N airspace hotspots using sliding event-time spatial windows
 4. **Stores** the data in ClickHouse using a `ReplacingMergeTree` that deduplicates by `(icao24, time_position)`
 5. **Visualises** everything in a Grafana dashboard that auto-refreshes every 10 seconds
 
@@ -46,12 +47,12 @@ Every 10 seconds, the pipeline:
 │   │  │  (event-time watermarks, ±5s)      │  │                   │
 │   │  └──────────┬─────────────────────────┘  │                   │
 │   │             │                            │                   │
-│   │    ┌────────┼────────────┐               │                   │
-│   │    ▼        ▼            ▼               │                   │
-│   │  Raw      Alert        60-sec            │                   │
-│   │  sink     stream       country           │                   │
-│   │  (JDBC)   (keyed       window            │                   │
-│   │           state)       (tumbling)        │                   │
+│   │    ┌────────┼────────────┬───────────┐   │                   │
+│   │    ▼        ▼            ▼           ▼   │                   │
+│   │  Raw      Alert        60-sec      Top-N │                   │
+│   │  sink     stream       country     spatial│                   │
+│   │  (JDBC)   (keyed       window      hotspots│                   │
+│   │           state)       (tumbling)  (sliding)│                  │
 │   └────┬──────────────────────────────────── ┘                   │
 │        │                                                         │
 │        ▼                                                         │
@@ -110,14 +111,14 @@ Every 10 seconds, the pipeline:
 │       ├── com/project/model/
 │       │   └── FlightEvent.java        # Full OpenSky POJO with Jackson annotations
 │       └── com/bhargavihq/flinkopenskyvectorstream/
-│           ├── OpenSkyVectorStreamJob.java           # Main Flink job (3 operators)
+│           ├── OpenSkyVectorStreamJob.java           # Main Flink job (4 operators)
 │           └── FlightEventDeserializationSchema.java # Kafka JSON → FlightEvent
 └── pom.xml
 ```
 
 ---
 
-## Flink Job — Three Operators
+## Flink Job — Four Operators
 
 ### 1. Raw JDBC sink → ClickHouse
 Every event is batched (1,000 records or 1 second) and written to ClickHouse. The `ReplacingMergeTree` engine deduplicates rows for the same `(icao24, time_position)`, keeping the latest `last_contact`.
@@ -139,6 +140,13 @@ The state TTL prevents stale keys from accumulating indefinitely when aircraft d
 
 ### 3. 60-second tumbling window — flights per country
 Using event-time watermarks (bounded out-of-orderness: 5 seconds), Flink counts flights per country in each 60-second window and logs the result.
+
+### 4. Sliding spatial hotspots — top-N busiest airspace cells
+Airborne flights with valid latitude/longitude are grouped into 1° × 1° spatial cells. Flink then computes per-cell aircraft counts in **120-second sliding event-time windows** advancing every 30 seconds, and ranks the **top 5 cells** each window.
+
+This demonstrates a two-stage streaming pattern commonly used in production:
+- windowed local aggregation (`cell -> count`)
+- global ranking per window (`window_end -> top-N`)
 
 ---
 
